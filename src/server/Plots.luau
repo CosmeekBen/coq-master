@@ -59,7 +59,54 @@ local function building(model, origin, center, wallColor, roofColor, signText, s
 			roofColor, Enum.Material.Slate)
 		slab.Parent = model
 	end
-	Birds.billboard(back, signText, 10, signColor)
+	-- panneau sur poteaux, devant le bâtiment (rien ne flotte à travers les murs / le toit)
+	local sx, sz = center.X, center.Z + d / 2 + 4
+	local postColor = Color3.fromRGB(95, 60, 35)
+	part(model, "PostL", Vector3.new(0.6, 4.4, 0.6), origin * CFrame.new(sx - 5, 2.2, sz), postColor, Enum.Material.Wood)
+	part(model, "PostR", Vector3.new(0.6, 4.4, 0.6), origin * CFrame.new(sx + 5, 2.2, sz), postColor, Enum.Material.Wood)
+	local board = part(model, "Board", Vector3.new(12, 2.6, 0.4), origin * CFrame.new(sx, 4.9, sz), Color3.fromRGB(60, 40, 28), Enum.Material.Wood)
+	Birds.surfaceText(board, Enum.NormalId.Back, signText, signColor)
+	Birds.surfaceText(board, Enum.NormalId.Front, signText, signColor)
+end
+
+-- Clôture autour de la base, avec un portail au milieu de la façade.
+-- Un mur invisible (hauteur 14) empêche de sauter par-dessus.
+local function perimeterFence(model, origin)
+	local half = 34.5
+	local wood = Color3.fromRGB(150, 105, 65)
+	local dark = Color3.fromRGB(100, 68, 40)
+
+	local function run(ax, az, bx, bz)
+		local a, b = Vector3.new(ax, 0, az), Vector3.new(bx, 0, bz)
+		local len = (b - a).Magnitude
+		local dir = (b - a).Unit
+		local mid = (a + b) / 2
+		local cf = origin * CFrame.lookAt(mid, mid + dir)
+		for _, y in { 1.8, 4.4 } do
+			local rail = part(model, "Rail", Vector3.new(0.4, 0.5, len), cf * CFrame.new(0, y, 0), wood, Enum.Material.WoodPlanks)
+			rail.CanCollide = false
+		end
+		local barrier = part(model, "Barrier", Vector3.new(0.6, 14, len), cf * CFrame.new(0, 7, 0), wood)
+		barrier.Transparency = 1
+		local n = math.max(1, math.floor(len / 5))
+		for k = 0, n do
+			local p = a + dir * (len * k / n)
+			local post = part(model, "Post", Vector3.new(0.9, 6, 0.9), origin * CFrame.new(p.X, 3, p.Z), dark, Enum.Material.Wood)
+			post.CanCollide = false
+		end
+	end
+
+	run(-half, -half, half, -half) -- fond
+	run(-half, -half, -half, half) -- gauche
+	run(half, -half, half, half) -- droite
+	run(-half, half, -5.5, half) -- façade, côté gauche
+	run(5.5, half, half, half) -- façade, côté droit
+
+	-- portail
+	for _, x in { -5.5, 5.5 } do
+		part(model, "GatePost", Vector3.new(1.4, 9, 1.4), origin * CFrame.new(x, 4.5, half), dark, Enum.Material.Wood)
+	end
+	part(model, "GateBeam", Vector3.new(12.4, 1, 1), origin * CFrame.new(0, 9.2, half), dark, Enum.Material.Wood)
 end
 
 local function buildPlot(i)
@@ -71,9 +118,14 @@ local function buildPlot(i)
 	building(model, origin, ROOSTER_CENTER, Color3.fromRGB(165, 60, 50), Color3.fromRGB(95, 55, 35), "Poulailler à coqs", Color3.fromRGB(255, 140, 120))
 	building(model, origin, HEN_CENTER, Color3.fromRGB(235, 225, 205), Color3.fromRGB(190, 120, 70), "Poulailler à poules", Color3.fromRGB(255, 235, 160))
 
+	perimeterFence(model, origin)
+
+	-- panneau du propriétaire (texte sur les deux faces)
 	local sign = part(model, "Sign", Vector3.new(14, 4, 1), origin * CFrame.new(0, 2, -30), Color3.fromRGB(120, 75, 40), Enum.Material.Wood)
-	local signLabel = Birds.billboard(sign, "Base libre", 0, Color3.new(1, 1, 1))
-	sign.Parent = model
+	local signLabels = {
+		Birds.surfaceText(sign, Enum.NormalId.Front, "Base libre"),
+		Birds.surfaceText(sign, Enum.NormalId.Back, "Base libre"),
+	}
 
 	local dyn = Instance.new("Folder")
 	dyn.Name = "Dynamic"
@@ -84,7 +136,7 @@ local function buildPlot(i)
 		origin = origin,
 		model = model,
 		dyn = dyn,
-		sign = signLabel,
+		signLabels = signLabels,
 		owner = nil,
 		eggParts = {},
 	}
@@ -117,7 +169,9 @@ function Plots.assign(player)
 		if not plot.owner then
 			plot.owner = player
 			byPlayer[player] = plot
-			plot.sign.Text = "Base de " .. player.DisplayName
+			for _, l in plot.signLabels do
+				l.Text = "Base de " .. player.DisplayName
+			end
 			return plot
 		end
 	end
@@ -131,7 +185,9 @@ function Plots.release(player)
 	end
 	plot.owner = nil
 	byPlayer[player] = nil
-	plot.sign.Text = "Base libre"
+	for _, l in plot.signLabels do
+		l.Text = "Base libre"
+	end
 	plot.dyn:ClearAllChildren()
 	plot.eggParts = {}
 end
@@ -206,7 +262,7 @@ local function renderEggs(plot, profile)
 			mesh.MeshType = Enum.MeshType.Sphere
 			mesh.Parent = egg
 			egg:SetAttribute("BaseSize", egg.Size)
-			Birds.billboard(egg, "", 4.5, Config.RarityColors[def.rarity])
+			Birds.billboard(egg, "", 4.5, Config.RarityColors[def.rarity], 200)
 
 			local click = Instance.new("ClickDetector")
 			click.MaxActivationDistance = 40
@@ -234,7 +290,7 @@ function Plots.updateEgg(player, rec, def, silent)
 	local label = egg:FindFirstChild("Label")
 	if label then
 		label.Text.Text = ("%s\n%d / %d  (clique !)"):format(def.name, rec.taps, def.taps)
-		label.Size = UDim2.fromOffset(220, 60)
+		label.Size = UDim2.fromOffset(200, 54)
 	end
 	if not silent then
 		local base = egg:GetAttribute("BaseSize")

@@ -4,12 +4,12 @@ local Birds = {}
 local ORANGE = Color3.fromRGB(255, 150, 30)
 local RED = Color3.fromRGB(220, 40, 40)
 
-function Birds.billboard(adornee, text, studsY, color)
+function Birds.billboard(adornee, text, studsY, color, width)
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "Label"
-	gui.Size = UDim2.fromOffset(180, 50)
+	gui.Size = UDim2.fromOffset(width or 150, 36)
 	gui.StudsOffset = Vector3.new(0, studsY, 0)
-	gui.MaxDistance = 90
+	gui.MaxDistance = 45
 	gui.Adornee = adornee
 	local label = Instance.new("TextLabel")
 	label.Name = "Text"
@@ -22,6 +22,25 @@ function Birds.billboard(adornee, text, studsY, color)
 	label.Text = text
 	label.Parent = gui
 	gui.Parent = adornee
+	return label
+end
+
+-- Texte posé SUR une face d'un bloc (panneau) : il fait partie du décor et ne traverse pas les murs.
+function Birds.surfaceText(part, face, text, color)
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = face
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 40
+	gui.LightInfluence = 0
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamBold
+	label.TextScaled = true
+	label.TextColor3 = color or Color3.new(1, 1, 1)
+	label.Text = text
+	label.Parent = gui
+	gui.Parent = part
 	return label
 end
 

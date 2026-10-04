@@ -364,6 +364,7 @@ for i = 1, 2 do
 	nameLabels[i].ZIndex = 11
 	local back = new("Frame", { Size = UDim2.fromScale(0.38, 0.05), Position = UDim2.fromScale(x, 0.1), BackgroundColor3 = Color3.fromRGB(70, 30, 30), ZIndex = 11 }, overlay)
 	corner(back)
+	new("UIStroke", { Thickness = 2, Color = Color3.new(0, 0, 0) }, back)
 	hpFills[i] = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = i == 1 and GREEN or RED, ZIndex = 12 }, back)
 	corner(hpFills[i])
 	hpTexts[i] = label(back, "", UDim2.fromScale(1, 1), nil, 18, nil, Enum.TextXAlignment.Center)
@@ -382,9 +383,18 @@ local viewport = new("ViewportFrame", {
 	ZIndex = 11,
 }, overlay)
 corner(viewport, 12)
-local camera = new("Camera", { FieldOfView = 45, CFrame = CFrame.lookAt(Vector3.new(0, 5.5, 15), Vector3.new(0, 3.2, 0)) }, viewport)
+new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(95, 150, 225), Color3.fromRGB(250, 215, 170)) }, viewport)
+new("UIStroke", { Thickness = 3, Color = Color3.fromRGB(255, 200, 90) }, viewport)
+local CAM_BASE = CFrame.lookAt(Vector3.new(0, 5.5, 15), Vector3.new(0, 3.2, 0))
+local camera = new("Camera", { FieldOfView = 45, CFrame = CAM_BASE }, viewport)
 viewport.CurrentCamera = camera
 local arena = new("Folder", { Name = "Arena" }, viewport)
+
+local introLabel = label(overlay, "⚔ COMBAT ! ⚔", UDim2.fromScale(0.6, 0.2), UDim2.fromScale(0.2, 0.3), 70, Color3.fromRGB(255, 220, 90), Enum.TextXAlignment.Center)
+introLabel.ZIndex = 30
+introLabel.TextScaled = true
+introLabel.TextStrokeTransparency = 0
+introLabel.Visible = false
 
 local logLabel = label(overlay, "", UDim2.fromScale(0.9, 0.06), UDim2.fromScale(0.05, 0.7), 20, nil, Enum.TextXAlignment.Center)
 logLabel.ZIndex = 11
@@ -440,9 +450,9 @@ local function moveActor(actor, goal, time, style)
 	actor.tween:Play()
 end
 
-local function flash(actor)
+local function flash(actor, color)
 	for p in actor.colors do
-		p.Color = Color3.fromRGB(255, 70, 60)
+		p.Color = color or Color3.fromRGB(255, 70, 60)
 	end
 	task.delay(0.15, function()
 		for p, c in actor.colors do
@@ -473,13 +483,72 @@ local function popup(worldPos, text, color, big)
 	end)
 end
 
+-- Pluie de plumes à l'impact (les ParticleEmitter ne s'affichent pas dans un ViewportFrame)
+local function burst(pos, color, count)
+	for _ = 1, count do
+		local f = new("Part", {
+			Size = Vector3.new(0.5, 0.1, 1.1), Color = color, Anchored = true, CanCollide = false,
+			Material = Enum.Material.SmoothPlastic, CFrame = CFrame.new(pos) * CFrame.Angles(math.random() * 6, math.random() * 6, 0),
+		}, arena)
+		local dir = Vector3.new(math.random() - 0.5, 0.4 + math.random(), (math.random() - 0.5) * 0.8).Unit
+		local goal = CFrame.new(pos + dir * (2 + math.random() * 2.5) + Vector3.new(0, 1.5, 0)) * CFrame.Angles(math.random() * 6, math.random() * 6, math.random() * 6)
+		TweenService:Create(f, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = goal, Transparency = 1 }):Play()
+		task.delay(0.8, function()
+			f:Destroy()
+		end)
+	end
+end
+
+local function shake(magnitude)
+	task.spawn(function()
+		for _ = 1, 6 do
+			camera.CFrame = CAM_BASE * CFrame.new((math.random() - 0.5) * magnitude, (math.random() - 0.5) * magnitude, 0)
+			task.wait(0.03)
+		end
+		camera.CFrame = CAM_BASE
+	end)
+end
+
 local function buildArena(r)
 	arena:ClearAllChildren()
-	local function block(size, cf, color, material)
-		new("Part", { Size = size, CFrame = cf, Color = color, Anchored = true, Material = material or Enum.Material.SmoothPlastic }, arena)
+	local function block(name, size, cf, color, material, shape)
+		local p = new("Part", { Name = name, Size = size, CFrame = cf, Color = color, Anchored = true, CanCollide = false, Material = material or Enum.Material.SmoothPlastic }, arena)
+		if shape then
+			p.Shape = shape
+		end
+		return p
 	end
-	block(Vector3.new(120, 1, 60), CFrame.new(0, -0.5, -10), Color3.fromRGB(105, 165, 80))
-	block(Vector3.new(26, 0.2, 10), CFrame.new(0, 0.05, 0), Color3.fromRGB(215, 190, 120), Enum.Material.Sand)
+	local flat = CFrame.Angles(0, 0, math.pi / 2) -- un cylindre Roblox est couché sur X : on le redresse
+
+	-- décor : sol, collines, piste ronde
+	block("Ground", Vector3.new(220, 1, 140), CFrame.new(0, -0.5, -35), Color3.fromRGB(95, 155, 75))
+	block("HillL", Vector3.new(90, 16, 12), CFrame.new(-50, 6, -52), Color3.fromRGB(70, 125, 70))
+	block("HillR", Vector3.new(100, 22, 12), CFrame.new(45, 9, -55), Color3.fromRGB(60, 112, 66))
+	block("RingEdge", Vector3.new(0.3, 25, 25), CFrame.new(0, 0.05, 0) * flat, Color3.fromRGB(170, 60, 50), nil, Enum.PartType.Cylinder)
+	block("Ring", Vector3.new(0.4, 23, 23), CFrame.new(0, 0.12, 0) * flat, Color3.fromRGB(220, 195, 125), Enum.Material.Sand, Enum.PartType.Cylinder)
+	block("Center", Vector3.new(0.5, 6, 6), CFrame.new(0, 0.18, 0) * flat, Color3.fromRGB(200, 170, 100), Enum.Material.Sand, Enum.PartType.Cylinder)
+
+	-- cordes autour de la piste (demi-cercle du fond)
+	local R, steps = 13, 14
+	local prev
+	for k = 0, steps do
+		local ang = math.pi * k / steps
+		local pt = Vector3.new(math.cos(ang) * R, 0, -math.sin(ang) * R)
+		block("RopePost", Vector3.new(0.5, 3, 0.5), CFrame.new(pt + Vector3.new(0, 1.5, 0)), k % 2 == 0 and Color3.fromRGB(220, 50, 50) or Color3.fromRGB(240, 240, 240))
+		if prev then
+			local mid = (prev + pt) / 2
+			block("Rope", Vector3.new(0.18, 0.18, (pt - prev).Magnitude), CFrame.lookAt(mid + Vector3.new(0, 2.6, 0), pt + Vector3.new(0, 2.6, 0)), Color3.fromRGB(235, 220, 190))
+		end
+		prev = pt
+	end
+
+	-- gradins + bannières
+	block("Tier1", Vector3.new(64, 1, 3), CFrame.new(0, 0.5, -16), Color3.fromRGB(125, 85, 52), Enum.Material.WoodPlanks)
+	block("Tier2", Vector3.new(64, 2, 3), CFrame.new(0, 1, -19), Color3.fromRGB(110, 74, 46), Enum.Material.WoodPlanks)
+	for _, side in { -1, 1 } do
+		block("Pole", Vector3.new(0.4, 11, 0.4), CFrame.new(side * 18, 5.5, -13), Color3.fromRGB(80, 55, 35))
+		block("Banner", Vector3.new(0.15, 5, 3), CFrame.new(side * 18, 8, -11.5), side < 0 and Color3.fromRGB(210, 50, 50) or Color3.fromRGB(60, 110, 220))
+	end
 
 	local actors = {}
 	local fighters = { r.a, r.b }
@@ -488,23 +557,29 @@ local function buildArena(r)
 		local scale = Config.RoosterScale[f.rarity] or 1
 		local x = i == 1 and -5 or 5
 		local yaw = i == 1 and -math.pi / 2 or math.pi / 2 -- face à face
-		local cf = CFrame.new(x, 2 * scale, 0) * CFrame.Angles(0, yaw, 0)
+		local cf = CFrame.new(x, 2 * scale + 0.2, 0) * CFrame.Angles(0, yaw, 0)
 		local model = Birds.create(arena, "Fighter" .. i, cf, Config.RarityColors[f.rarity] or Color3.new(1, 1, 1), scale, true)
 		actors[i] = makeActor(model, cf)
 	end
 
-	-- spectatrices : tes poules au fond de l'arène
+	-- spectatrices : tes poules sur les gradins (agrandies pour qu'on les voie)
 	local spectators = {}
 	local hens = state and state.hens or {}
-	local count = math.min(#hens, 9)
-	for n = 1, count do
-		local def = Config.HensById[hens[n].henId]
-		if def then
-			local scale = Config.HenScale[def.rarity]
-			local x = (n - (count + 1) / 2) * 4.2
-			local cf = CFrame.new(x, 2 * scale, -7) * CFrame.Angles(0, math.pi, 0)
-			local model = Birds.create(arena, "Spectator" .. n, cf, def.color, scale, false)
-			table.insert(spectators, { model = model, base = cf, phase = n * 1.3 })
+	local rows = { {}, {} }
+	for n = 1, math.min(#hens, 12) do
+		table.insert(rows[n % 2 + 1], hens[n])
+	end
+	local tiers = { { z = -16, top = 1 }, { z = -19, top = 2 } }
+	for rowIndex, list in rows do
+		for idx, hen in list do
+			local def = Config.HensById[hen.henId]
+			if def then
+				local scale = Config.HenScale[def.rarity] * 1.5
+				local x = (idx - (#list + 1) / 2) * 8
+				local cf = CFrame.new(x, tiers[rowIndex].top + 2 * scale, tiers[rowIndex].z) * CFrame.Angles(0, math.pi, 0)
+				local model = Birds.create(arena, "Spectator", cf, def.color, scale, false)
+				table.insert(spectators, { model = model, base = cf, phase = idx * 1.3 + rowIndex })
+			end
 		end
 	end
 	return actors, spectators
@@ -574,6 +649,20 @@ local function startFight(r)
 	gauge, waitingServer, boostUntil, boostsUsed = 0, false, 0, 0
 	boostFrame.Visible = true
 
+	-- intro : titre qui grossit en s'effaçant + caméra qui avance
+	introLabel.Visible = true
+	introLabel.Size = UDim2.fromScale(0.3, 0.1)
+	introLabel.Position = UDim2.fromScale(0.35, 0.35)
+	introLabel.TextTransparency = 0
+	introLabel.TextStrokeTransparency = 0
+	local introTween = TweenService:Create(introLabel, TweenInfo.new(1.1), { Size = UDim2.fromScale(0.7, 0.24), Position = UDim2.fromScale(0.15, 0.25), TextTransparency = 1, TextStrokeTransparency = 1 })
+	introTween:Play()
+	introTween.Completed:Once(function()
+		introLabel.Visible = false
+	end)
+	camera.CFrame = CAM_BASE * CFrame.new(0, 1.5, 7)
+	TweenService:Create(camera, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = CAM_BASE }):Play()
+
 	if fightConn then
 		fightConn:Disconnect()
 	end
@@ -603,6 +692,13 @@ local function playHit(e)
 	task.delay(0.1, function()
 		moveActor(att, att.base, 0.18)
 		flash(def)
+		if e.boosted then
+			flash(att, Color3.fromRGB(255, 215, 80))
+		end
+		burst(def.base.Position + Vector3.new(0, 2, 0), def.colors[def.model.PrimaryPart] or Color3.new(1, 1, 1), e.crit and 14 or 6)
+		if e.crit or e.boosted then
+			shake(e.crit and 0.9 or 0.45)
+		end
 		moveActor(def, def.base * CFrame.new(0, 0.5, 1.6) * CFrame.Angles(math.rad(-15), 0, 0), 0.08)
 		task.delay(0.1, function()
 			moveActor(def, def.base, 0.2)
