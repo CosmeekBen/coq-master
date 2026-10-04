@@ -22,7 +22,8 @@ local function default()
 	return {
 		feathers = Config.StartFeathers,
 		trophies = 0,
-		hens = Config.StartHens,
+		hens = {},
+		starterGiven = false,
 		roosters = {},
 		eggs = {},
 		selected = nil,
@@ -48,6 +49,15 @@ function Data.load(player)
 		end
 	else
 		warn("[Data] Chargement impossible pour " .. player.Name .. " : " .. tostring(result))
+	end
+	-- ancienne sauvegarde : "hens" était un nombre
+	if type(profile.hens) == "number" then
+		local list = {}
+		for _ = 1, profile.hens do
+			table.insert(list, { id = profile.nextId, henId = "common" })
+			profile.nextId += 1
+		end
+		profile.hens = list
 	end
 	profiles[player] = profile
 	return profile

@@ -20,7 +20,9 @@ local function remote(name)
 end
 
 local BuyEgg = remote("BuyEgg") -- client -> serveur (eggId)
-local BuyHen = remote("BuyHen")
+local BuyHen = remote("BuyHen") -- (henId)
+local SellHen = remote("SellHen") -- (uid)
+local SellRooster = remote("SellRooster") -- (roosterId)
 local SelectRooster = remote("SelectRooster") -- (roosterId)
 local Fight = remote("Fight")
 local State = remote("State") -- serveur -> client
@@ -35,6 +37,17 @@ local function findRooster(profile, id)
 		end
 	end
 	return nil
+end
+
+local function incomePerSecond(profile)
+	local total = 0
+	for _, hen in profile.hens do
+		local def = Config.HensById[hen.henId]
+		if def then
+			total += def.income
+		end
+	end
+	return total
 end
 
 local function updateLeaderstats(player, profile)
@@ -55,7 +68,7 @@ local function pushState(player)
 		feathers = math.floor(profile.feathers),
 		trophies = profile.trophies,
 		hens = profile.hens,
-		henPrice = profile.hens < Config.MaxHens and Config.henPrice(profile.hens) or nil,
+		income = incomePerSecond(profile),
 		roosters = profile.roosters,
 		eggs = profile.eggs,
 		selected = profile.selected,
@@ -87,12 +100,17 @@ local function onPlayerAdded(player)
 		return -- parti pendant le chargement
 	end
 
-	-- coq de départ offert pour pouvoir combattre tout de suite
-	if #profile.roosters == 0 and #profile.eggs == 0 then
+	-- cadeau de départ (une seule fois) : 1 coq pour combattre + 2 poules communes
+	if not profile.starterGiven then
+		profile.starterGiven = true
 		local starter = Config.rollRooster(Config.EggsById.common, profile.nextId)
 		profile.nextId += 1
 		table.insert(profile.roosters, starter)
 		profile.selected = starter.id
+		for _ = 1, 2 do
+			table.insert(profile.hens, { id = profile.nextId, henId = "common" })
+			profile.nextId += 1
+		end
 	end
 
 	local plot = Plots.assign(player)
@@ -131,7 +149,7 @@ task.spawn(function()
 	while true do
 		task.wait(1)
 		for player, profile in Data.all() do
-			profile.feathers += profile.hens * Config.HenIncome
+			profile.feathers += incomePerSecond(profile)
 			pushState(player)
 		end
 	end
@@ -175,23 +193,58 @@ BuyEgg.OnServerEvent:Connect(function(player, eggId)
 	refresh(player)
 end)
 
-BuyHen.OnServerEvent:Connect(function(player)
+BuyHen.OnServerEvent:Connect(function(player, henId)
 	local profile = Data.get(player)
-	if not profile then
+	local def = type(henId) == "string" and Config.HensById[henId]
+	if not profile or not def then
 		return
 	end
-	if profile.hens >= Config.MaxHens then
-		Notify:FireClient(player, "Poulailler complet !")
+	if #profile.hens >= Config.MaxHens then
+		Notify:FireClient(player, "Poulailler complet ! Revends une poule pour faire de la place.")
 		return
 	end
-	local price = Config.henPrice(profile.hens)
-	if profile.feathers < price then
+	if profile.feathers < def.price then
 		Notify:FireClient(player, "Pas assez de plumes.")
 		return
 	end
-	profile.feathers -= price
-	profile.hens += 1
+	profile.feathers -= def.price
+	table.insert(profile.hens, { id = profile.nextId, henId = def.id })
+	profile.nextId += 1
 	refresh(player)
+end)
+
+SellHen.OnServerEvent:Connect(function(player, uid)
+	local profile = Data.get(player)
+	if not profile or type(uid) ~= "number" then
+		return
+	end
+	for i, hen in profile.hens do
+		if hen.id == uid then
+			local def = Config.HensById[hen.henId]
+			table.remove(profile.hens, i)
+			profile.feathers += def and Config.henSellValue(def) or 0
+			refresh(player)
+			return
+		end
+	end
+end)
+
+SellRooster.OnServerEvent:Connect(function(player, id)
+	local profile = Data.get(player)
+	if not profile or type(id) ~= "number" then
+		return
+	end
+	for i, rooster in profile.roosters do
+		if rooster.id == id then
+			table.remove(profile.roosters, i)
+			profile.feathers += Config.roosterSellValue(rooster)
+			if profile.selected == id then
+				profile.selected = profile.roosters[1] and profile.roosters[1].id or nil
+			end
+			refresh(player)
+			return
+		end
+	end
 end)
 
 SelectRooster.OnServerEvent:Connect(function(player, id)

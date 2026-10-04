@@ -28,12 +28,12 @@ Pour tester la sauvegarde en Studio : *Game Settings → Security → Enable Stu
 | Bases / poulaillers / oeufs cliquables | `src/server/Plots.luau` |
 | Combat (simulation auto, ligues) | `src/server/Combat.luau` |
 | Logique serveur (achats, éclosion, combat) | `src/server/Main.server.luau` |
-| Interface (boutique, coqs, combat) | `src/client/Main.client.luau` |
+| Interface (œufs, poules, coqs, combat + arène 3D) | `src/client/Main.client.luau` |
 
 ## Boucle de jeu
 
-1. Les **poules** génèrent des plumes (🪶) en continu.
-2. Les plumes achètent des **oeufs** (Boutique). Plus l'oeuf est rare, plus il faut de clics pour l'éclore et meilleures sont les stats du coq.
+1. Les **poules** (4 raretés, achetées dans l'onglet Poules) génèrent des plumes (🪶) en continu. Poules et coqs peuvent être revendus.
+2. Les plumes achètent des **oeufs** (onglet Œufs). Plus l'oeuf est rare, plus il faut de clics pour l'éclore et meilleures sont les stats du coq.
 3. Clique sur l'oeuf dans ta base pour le casser → un coq naît.
 4. Onglet **Coqs** : choisis ton combattant. Onglet **Combat** : lance un match de ligue (adversaire = coq d'un autre joueur connecté, sinon coq fantôme). Victoire = plumes + trophées, défaite = perte de trophées.
 
