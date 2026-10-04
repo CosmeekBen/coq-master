@@ -25,11 +25,27 @@ local SellHen = remote("SellHen") -- (uid)
 local SellRooster = remote("SellRooster") -- (roosterId)
 local SelectRooster = remote("SelectRooster") -- (roosterId)
 local Fight = remote("Fight")
-local State = remote("State") -- serveur -> client
+local State = remote("State") -- serveur -> client (état complet, sur évènement)
+local Feathers = remote("Feathers") -- serveur -> client (plumes seules, chaque seconde)
 local Notify = remote("Notify")
 local FightResult = remote("FightResult")
 
 -- Helpers ---------------------------------------------------------------
+-- Anti-spam par joueur (le client est toujours considéré comme hostile)
+local lastAction = {}
+local function throttled(player, interval)
+	local now = os.clock()
+	if now - (lastAction[player] or 0) < interval then
+		return true
+	end
+	lastAction[player] = now
+	return false
+end
+
+local function isInt(n)
+	return type(n) == "number" and n % 1 == 0
+end
+
 local function findRooster(profile, id)
 	for _, r in profile.roosters do
 		if r.id == id then
@@ -150,7 +166,8 @@ task.spawn(function()
 		task.wait(1)
 		for player, profile in Data.all() do
 			profile.feathers += incomePerSecond(profile)
-			pushState(player)
+			updateLeaderstats(player, profile)
+			Feathers:FireClient(player, math.floor(profile.feathers))
 		end
 	end
 end)
@@ -166,14 +183,25 @@ task.spawn(function()
 end)
 
 game:BindToClose(function()
+	local pending = 0
 	for _, player in Players:GetPlayers() do
-		task.spawn(Data.save, player)
+		pending += 1
+		task.spawn(function()
+			Data.save(player)
+			pending -= 1
+		end)
 	end
-	task.wait(2)
+	local deadline = os.clock() + 25 -- Roblox coupe le serveur à ~30 s
+	while pending > 0 and os.clock() < deadline do
+		task.wait(0.1)
+	end
 end)
 
 -- Boutique ---------------------------------------------------------------
 BuyEgg.OnServerEvent:Connect(function(player, eggId)
+	if throttled(player, 0.25) then
+		return
+	end
 	local profile = Data.get(player)
 	local def = type(eggId) == "string" and Config.EggsById[eggId]
 	if not profile or not def then
@@ -194,6 +222,9 @@ BuyEgg.OnServerEvent:Connect(function(player, eggId)
 end)
 
 BuyHen.OnServerEvent:Connect(function(player, henId)
+	if throttled(player, 0.25) then
+		return
+	end
 	local profile = Data.get(player)
 	local def = type(henId) == "string" and Config.HensById[henId]
 	if not profile or not def then
@@ -214,8 +245,11 @@ BuyHen.OnServerEvent:Connect(function(player, henId)
 end)
 
 SellHen.OnServerEvent:Connect(function(player, uid)
+	if throttled(player, 0.25) then
+		return
+	end
 	local profile = Data.get(player)
-	if not profile or type(uid) ~= "number" then
+	if not profile or not isInt(uid) then
 		return
 	end
 	for i, hen in profile.hens do
@@ -230,8 +264,11 @@ SellHen.OnServerEvent:Connect(function(player, uid)
 end)
 
 SellRooster.OnServerEvent:Connect(function(player, id)
+	if throttled(player, 0.25) then
+		return
+	end
 	local profile = Data.get(player)
-	if not profile or type(id) ~= "number" then
+	if not profile or not isInt(id) then
 		return
 	end
 	for i, rooster in profile.roosters do
@@ -248,8 +285,11 @@ SellRooster.OnServerEvent:Connect(function(player, id)
 end)
 
 SelectRooster.OnServerEvent:Connect(function(player, id)
+	if throttled(player, 0.25) then
+		return
+	end
 	local profile = Data.get(player)
-	if not profile or type(id) ~= "number" or not findRooster(profile, id) then
+	if not profile or not isInt(id) or not findRooster(profile, id) then
 		return
 	end
 	profile.selected = id
@@ -258,6 +298,7 @@ end)
 
 -- Éclosion : un clic = un tap -----------------------------------------------
 local lastTap = {}
+local fightLockedUntil = {}
 
 Plots.onEggTap = function(player, uid)
 	local profile = Data.get(player)
@@ -301,10 +342,11 @@ end
 
 Players.PlayerRemoving:Connect(function(player)
 	lastTap[player] = nil
+	lastAction[player] = nil
+	fightLockedUntil[player] = nil
 end)
 
 -- Ligue : combats -------------------------------------------------------------
-local fightLockedUntil = {}
 
 Fight.OnServerEvent:Connect(function(player)
 	local profile = Data.get(player)

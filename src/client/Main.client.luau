@@ -302,6 +302,37 @@ remotes.State.OnClientEvent:Connect(function(newState)
 	end
 end)
 
+-- Tick de revenu : on ne reconstruit le panneau que si un prix devient abordable
+-- (le reconstruire chaque seconde ferait perdre des clics sur les boutons).
+local function crossesAPrice(old, new)
+	local function crossed(price)
+		return old < price and new >= price
+	end
+	for _, egg in Config.Eggs do
+		if crossed(egg.price) then
+			return true
+		end
+	end
+	for _, hen in Config.Hens do
+		if crossed(hen.price) then
+			return true
+		end
+	end
+	return false
+end
+
+remotes.Feathers.OnClientEvent:Connect(function(amount)
+	if not state then
+		return
+	end
+	local old = state.feathers
+	state.feathers = amount
+	refreshHud()
+	if not fighting and crossesAPrice(old, amount) then
+		renderPanel()
+	end
+end)
+
 remotes.Notify.OnClientEvent:Connect(showToast)
 
 -- Écran de combat ----------------------------------------------------------------------

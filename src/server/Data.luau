@@ -73,11 +73,18 @@ function Data.save(player)
 	if not profile or not loadedOk[player] then
 		return
 	end
-	local ok, err = pcall(function()
-		store:SetAsync("p_" .. player.UserId, profile)
-	end)
-	if not ok then
-		warn("[Data] Sauvegarde impossible pour " .. player.Name .. " : " .. tostring(err))
+	-- UpdateAsync (et non SetAsync) + 3 essais : un échec réseau ponctuel ne perd pas la progression
+	for attempt = 1, 3 do
+		local ok, err = pcall(function()
+			store:UpdateAsync("p_" .. player.UserId, function()
+				return profile
+			end)
+		end)
+		if ok then
+			return
+		end
+		warn(("[Data] Sauvegarde de %s échouée (essai %d/3) : %s"):format(player.Name, attempt, tostring(err)))
+		task.wait(2 * attempt)
 	end
 end
 
