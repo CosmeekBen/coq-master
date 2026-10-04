@@ -7,7 +7,14 @@ local Config = require(ReplicatedStorage.Shared.Config)
 
 local Data = {}
 
-local store = DataStoreService:GetDataStore("CoqMaster_v1")
+-- GetDataStore plante si la place n'est pas publiée : on continue alors sans sauvegarde.
+local storeOk, store = pcall(function()
+	return DataStoreService:GetDataStore("CoqMaster_v1")
+end)
+if not storeOk then
+	warn("[Data] DataStore indisponible (place non publiée ?) : la progression ne sera pas sauvegardée.")
+	store = nil
+end
 local profiles = {}
 local loadedOk = {}
 
@@ -25,6 +32,10 @@ end
 
 function Data.load(player)
 	local profile = default()
+	if not store then
+		profiles[player] = profile
+		return profile
+	end
 	local ok, result = pcall(function()
 		return store:GetAsync("p_" .. player.UserId)
 	end)
