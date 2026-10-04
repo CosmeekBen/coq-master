@@ -28,7 +28,8 @@ local Fight = remote("Fight")
 local State = remote("State") -- serveur -> client (état complet, sur évènement)
 local Feathers = remote("Feathers") -- serveur -> client (plumes seules, chaque seconde)
 local Notify = remote("Notify")
-local FightResult = remote("FightResult")
+local Boost = remote("Boost") -- client -> serveur : jauge de boost pleine
+local FightUpdate = remote("FightUpdate") -- serveur -> client : start / hit / boost / end
 
 -- Helpers ---------------------------------------------------------------
 -- Anti-spam par joueur (le client est toujours considéré comme hostile)
@@ -234,11 +235,12 @@ BuyHen.OnServerEvent:Connect(function(player, henId)
 		Notify:FireClient(player, "Poulailler complet ! Revends une poule pour faire de la place.")
 		return
 	end
-	if profile.feathers < def.price then
+	local price = Config.henPrice(def, Config.countHens(profile.hens, def.id))
+	if profile.feathers < price then
 		Notify:FireClient(player, "Pas assez de plumes.")
 		return
 	end
-	profile.feathers -= def.price
+	profile.feathers -= price
 	table.insert(profile.hens, { id = profile.nextId, henId = def.id })
 	profile.nextId += 1
 	refresh(player)
@@ -299,6 +301,7 @@ end)
 -- Éclosion : un clic = un tap -----------------------------------------------
 local lastTap = {}
 local fightLockedUntil = {}
+local fights = {} -- player -> { boostUntil, lastBoostAt, boosts }
 
 Plots.onEggTap = function(player, uid)
 	local profile = Data.get(player)
@@ -344,13 +347,15 @@ Players.PlayerRemoving:Connect(function(player)
 	lastTap[player] = nil
 	lastAction[player] = nil
 	fightLockedUntil[player] = nil
+	fights[player] = nil
 end)
 
--- Ligue : combats -------------------------------------------------------------
+-- Ligue : combats (déroulés en direct côté serveur, le boost du joueur modifie les dégâts) ------
+local BOOST = Config.Boost
 
 Fight.OnServerEvent:Connect(function(player)
 	local profile = Data.get(player)
-	if not profile then
+	if not profile or fights[player] then
 		return
 	end
 	if os.clock() < (fightLockedUntil[player] or 0) then
@@ -361,6 +366,22 @@ Fight.OnServerEvent:Connect(function(player)
 		Notify:FireClient(player, "Sélectionne un coq pour combattre.")
 		return
 	end
+
+	-- fatigue : un coq ne peut pas faire plus de MaxFights combats par fenêtre d'une heure
+	local now = os.time()
+	local _, restSeconds = Config.fatigue(mine, now)
+	if restSeconds > 0 then
+		Notify:FireClient(player, ("%s est épuisé ! Repos encore %d min — choisis un autre coq."):format(mine.name, math.ceil(restSeconds / 60)))
+		return
+	end
+	local kept = {}
+	for _, t in mine.fightTimes or {} do
+		if now - t < Config.Fatigue.Window then
+			table.insert(kept, t)
+		end
+	end
+	table.insert(kept, now)
+	mine.fightTimes = kept
 
 	-- adversaire : coq sélectionné d'un autre joueur connecté, sinon coq fantôme
 	local otherRooster, otherName
@@ -378,28 +399,66 @@ Fight.OnServerEvent:Connect(function(player)
 
 	local me = { name = mine.name, rarity = mine.rarity, hp = mine.hp, atk = mine.atk, spd = mine.spd }
 	local opponent = Combat.pickOpponent(me, profile.trophies, otherRooster, otherName)
-	local events, winner = Combat.simulate(me, opponent)
+	local timeScale = math.min(1, 15 / Combat.estimateDuration(me, opponent)) -- un combat dure ~15 s max
 
-	local league = Config.getLeague(profile.trophies)
-	local rewards
-	if winner == 1 then
-		rewards = { feathers = league.winFeathers, trophies = league.winTrophies }
-	else
-		rewards = { feathers = Config.LoseFeathers, trophies = -math.min(profile.trophies, league.loseTrophies) }
+	local fight = { boostUntil = 0, lastBoostAt = os.clock() + 1.2, boosts = 0 }
+	fights[player] = fight
+	FightUpdate:FireClient(player, { kind = "start", a = me, b = opponent })
+	pushState(player) -- met à jour la fatigue affichée
+
+	task.spawn(function()
+		task.wait(1.2) -- laisse l'écran de combat se préparer
+		local sim = Combat.new(me, opponent)
+		local prev = 0
+		while not sim.finished() do
+			task.wait((sim.nextTime() - prev) * timeScale)
+			if not player.Parent then
+				fights[player] = nil
+				return
+			end
+			local boosted = os.clock() < fight.boostUntil
+			local e = sim.step(boosted and BOOST.DamageMul or 1)
+			e.kind, e.boosted = "hit", boosted
+			prev = e.t
+			FightUpdate:FireClient(player, e)
+		end
+
+		task.wait(0.8)
+		local winner = sim.winner()
+		local league = Config.getLeague(profile.trophies)
+		local rewards
+		if winner == 1 then
+			rewards = { feathers = league.winFeathers, trophies = league.winTrophies }
+		else
+			rewards = { feathers = Config.LoseFeathers, trophies = -math.min(profile.trophies, league.loseTrophies) }
+		end
+		profile.feathers += rewards.feathers
+		profile.trophies += rewards.trophies
+
+		fights[player] = nil
+		fightLockedUntil[player] = os.clock() + Config.FightCooldown
+		FightUpdate:FireClient(player, {
+			kind = "end",
+			winner = winner,
+			rewards = rewards,
+			league = Config.getLeague(profile.trophies).name,
+		})
+		pushState(player)
+	end)
+end)
+
+-- Le client dit "ma jauge est pleine" : le serveur vérifie délai et quota avant d'activer.
+Boost.OnServerEvent:Connect(function(player)
+	local fight = fights[player]
+	local now = os.clock()
+	if not fight or fight.boosts >= BOOST.MaxPerFight or now < fight.boostUntil or now - fight.lastBoostAt < BOOST.MinInterval then
+		if fight then
+			FightUpdate:FireClient(player, { kind = "boostDenied" })
+		end
+		return
 	end
-	profile.feathers += rewards.feathers
-	profile.trophies += rewards.trophies
-
-	local duration = events[#events].t
-	fightLockedUntil[player] = os.clock() + math.min(duration, 12) + Config.FightCooldown
-
-	FightResult:FireClient(player, {
-		a = me,
-		b = opponent,
-		events = events,
-		winner = winner,
-		rewards = rewards,
-		league = Config.getLeague(profile.trophies).name,
-	})
-	pushState(player)
+	fight.boosts += 1
+	fight.boostUntil = now + BOOST.Duration
+	fight.lastBoostAt = now
+	FightUpdate:FireClient(player, { kind = "boost", duration = BOOST.Duration, used = fight.boosts })
 end)

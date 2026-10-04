@@ -58,6 +58,54 @@ for _, hen in Config.Hens do
 	Config.HensById[hen.id] = hen
 end
 
+-- Chaque poule d'une rareté coûte plus cher que la précédente de cette rareté
+Config.HenPriceGrowth = 1.4
+function Config.henPrice(def, ownedOfRarity)
+	return math.floor(def.price * Config.HenPriceGrowth ^ ownedOfRarity)
+end
+
+-- Combien de poules de cette rareté possède-t-on ? (hens = liste du profil)
+function Config.countHens(hens, henId)
+	local n = 0
+	for _, hen in hens do
+		if hen.henId == henId then
+			n += 1
+		end
+	end
+	return n
+end
+
+-- Boost de combat : on matraque le bouton pour remplir la jauge
+Config.Boost = {
+	Duration = 4, -- secondes d'effet
+	DamageMul = 1.75, -- dégâts de ton coq pendant le boost
+	MaxPerFight = 3,
+	MinInterval = 1.0, -- côté serveur : délai minimum entre deux boosts (anti-triche)
+	ClickGain = 0.08, -- part de jauge gagnée par clic
+	Decay = 0.25, -- part de jauge perdue par seconde
+}
+
+-- Fatigue : max MaxFights combats par coq sur une fenêtre glissante (secondes)
+Config.Fatigue = { MaxFights = 5, Window = 3600 }
+
+-- Retourne (combats récents, secondes de repos restantes avant de pouvoir se battre)
+function Config.fatigue(rooster, now)
+	local used, oldest = 0, nil
+	for _, t in rooster.fightTimes or {} do
+		if now - t < Config.Fatigue.Window then
+			used += 1
+			if not oldest or t < oldest then
+				oldest = t
+			end
+		end
+	end
+	local rest = 0
+	if used >= Config.Fatigue.MaxFights then
+		rest = oldest + Config.Fatigue.Window - now
+	end
+	return used, rest
+end
+
 function Config.henSellValue(def)
 	return math.floor(def.price * Config.SellRatio.hen)
 end

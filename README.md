@@ -35,7 +35,7 @@ Pour tester la sauvegarde en Studio : *Game Settings → Security → Enable Stu
 1. Les **poules** (4 raretés, achetées dans l'onglet Poules) génèrent des plumes (🪶) en continu. Poules et coqs peuvent être revendus.
 2. Les plumes achètent des **oeufs** (onglet Œufs). Plus l'oeuf est rare, plus il faut de clics pour l'éclore et meilleures sont les stats du coq.
 3. Clique sur l'oeuf dans ta base pour le casser → un coq naît.
-4. Onglet **Coqs** : choisis ton combattant. Onglet **Combat** : lance un match de ligue (adversaire = coq d'un autre joueur connecté, sinon coq fantôme). Victoire = plumes + trophées, défaite = perte de trophées.
+4. Onglet **Coqs** : choisis ton combattant. Onglet **Combat** : lance un match de ligue (adversaire = coq d'un autre joueur connecté, sinon coq fantôme). Victoire = plumes + trophées, défaite = perte de trophées. Pendant le combat, matraque le bouton **BOOST** pour remplir la jauge : +75 % de dégâts pendant 4 s (3 boosts max). Chaque coq est limité à 5 combats par heure (fatigue). Chaque poule achetée d'une même rareté coûte plus cher que la précédente.
 
 Tout le visuel est procédural (blocs colorés) en attendant tes modèles.
 

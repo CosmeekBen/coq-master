@@ -30,27 +30,50 @@ function Combat.pickOpponent(mine, trophies, otherRooster, otherName)
 	}
 end
 
--- Combat au temps réel : chaque coq frappe toutes les 10/spd secondes.
--- Retourne la liste d'évènements {t, attacker (1|2), dmg, crit, hp1, hp2} et le vainqueur.
-function Combat.simulate(a, b)
+-- Combat à tour de rôle sur une ligne de temps : chaque coq frappe toutes les 10/spd secondes.
+-- step(mul) joue le prochain coup ; mul multiplie les dégâts du coq 1 (boost du joueur).
+function Combat.new(a, b)
 	local fighters = { a, b }
 	local hp = { a.hp, b.hp }
 	local nextHit = { 10 / a.spd, 10 / b.spd }
-	local events = {}
+	local self = {}
 
-	while hp[1] > 0 and hp[2] > 0 do
+	function self.finished()
+		return hp[1] <= 0 or hp[2] <= 0
+	end
+
+	function self.nextTime()
+		return math.min(nextHit[1], nextHit[2])
+	end
+
+	function self.winner()
+		return hp[1] > 0 and 1 or 2
+	end
+
+	function self.step(mul)
 		local i = nextHit[1] <= nextHit[2] and 1 or 2
 		local j = 3 - i
 		local f = fighters[i]
 		local crit = rng:NextNumber() < 0.15
-		local dmg = f.atk * rng:NextNumber(0.85, 1.15) * (crit and 1.8 or 1)
+		local dmg = f.atk * rng:NextNumber(0.85, 1.15) * (crit and 1.8 or 1) * (i == 1 and mul or 1)
 		dmg = math.max(1, math.floor(dmg))
 		hp[j] = math.max(0, hp[j] - dmg)
-		table.insert(events, { t = nextHit[i], attacker = i, dmg = dmg, crit = crit, hp1 = hp[1], hp2 = hp[2] })
+		local t = nextHit[i]
 		nextHit[i] += 10 / f.spd
+		return { t = t, attacker = i, dmg = dmg, crit = crit, hp1 = hp[1], hp2 = hp[2] }
 	end
 
-	return events, hp[1] > 0 and 1 or 2
+	return self
+end
+
+-- Durée approximative (sans boost), pour comprimer les longs combats à ~15 s réelles
+function Combat.estimateDuration(a, b)
+	local sim = Combat.new(a, b)
+	local t = 0
+	while not sim.finished() do
+		t = sim.step(1).t
+	end
+	return t
 end
 
 return Combat

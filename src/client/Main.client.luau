@@ -193,8 +193,9 @@ tabs["Poules"] = function()
 	for _, hen in Config.Hens do
 		local f = row()
 		label(f, hen.name, UDim2.new(1, -150, 0, 24), UDim2.fromOffset(10, 5), 18, Config.RarityColors[hen.rarity])
-		label(f, ("+%s plume(s) / seconde"):format(tostring(hen.income)), UDim2.new(1, -150, 0, 22), UDim2.fromOffset(10, 31), 13, SOFT)
-		button(f, "🪶 " .. fmt(hen.price), state.feathers >= hen.price and GREEN or GREY, UDim2.fromOffset(120, 36), UDim2.new(1, -130, 0.5, -18), function()
+		label(f, ("+%s plume(s) / seconde • le prix monte à chaque achat"):format(tostring(hen.income)), UDim2.new(1, -150, 0, 22), UDim2.fromOffset(10, 31), 13, SOFT)
+		local price = Config.henPrice(hen, Config.countHens(state.hens, hen.id))
+		button(f, "🪶 " .. fmt(price), state.feathers >= price and GREEN or GREY, UDim2.fromOffset(120, 36), UDim2.new(1, -130, 0.5, -18), function()
 			remotes.BuyHen:FireServer(hen.id)
 		end)
 	end
@@ -224,7 +225,10 @@ tabs["Coqs"] = function()
 	for _, r in state.roosters do
 		local f = row()
 		label(f, r.name .. " • " .. r.rarity, UDim2.new(1, -250, 0, 24), UDim2.fromOffset(10, 5), 18, Config.RarityColors[r.rarity])
-		label(f, statsText(r), UDim2.new(1, -250, 0, 22), UDim2.fromOffset(10, 31), 14, SOFT)
+		local used, rest = Config.fatigue(r, os.time())
+		local tired = rest > 0
+		label(f, statsText(r) .. ("   💤 %d/%d"):format(used, Config.Fatigue.MaxFights) .. (tired and (" (repos %d min)"):format(math.ceil(rest / 60)) or ""),
+			UDim2.new(1, -250, 0, 22), UDim2.fromOffset(10, 31), 14, tired and Color3.fromRGB(230, 130, 110) or SOFT)
 		local selected = r.id == state.selected
 		local id = r.id
 		button(f, selected and "⭐ Choisi" or "Choisir", selected and ORANGE or GREEN, UDim2.fromOffset(100, 36), UDim2.new(1, -230, 0.5, -18), function()
@@ -245,15 +249,31 @@ tabs["Combat"] = function()
 	label(f, ("Victoire : +%d 🪶  +%d 🏆   Défaite : +%d 🪶  -%d 🏆"):format(league.winFeathers, league.winTrophies, Config.LoseFeathers, league.loseTrophies), UDim2.new(1, -20, 0, 36), UDim2.fromOffset(10, 58), 14)
 
 	local mine = state.selected and findRooster(state.selected)
-	local f2 = row(80)
+	local f2 = row(84)
 	if mine then
 		label(f2, "Ton combattant : " .. mine.name, UDim2.new(1, -20, 0, 26), UDim2.fromOffset(10, 8), 18, Config.RarityColors[mine.rarity])
 		label(f2, statsText(mine), UDim2.new(1, -20, 0, 24), UDim2.fromOffset(10, 38), 16)
 	else
 		label(f2, "Aucun coq sélectionné (onglet Coqs).", UDim2.new(1, -20, 1, 0), UDim2.fromOffset(10, 0), 16)
 	end
-	local b = button(content, "⚔ Lancer un combat", mine and not fighting and ORANGE or GREY, UDim2.new(1, -8, 0, 50), nil, function()
-		if mine and not fighting then
+	local restSeconds = 0
+	if mine then
+		local used, rest = Config.fatigue(mine, os.time())
+		restSeconds = rest
+		local info = ("Fatigue : %d / %d combats cette heure"):format(used, Config.Fatigue.MaxFights)
+		if rest > 0 then
+			info ..= (" — épuisé, repos %d min"):format(math.ceil(rest / 60))
+			task.delay(rest + 1, function()
+				if openTab == "Combat" and not fighting then
+					renderPanel()
+				end
+			end)
+		end
+		label(f2, info, UDim2.new(1, -20, 0, 20), UDim2.fromOffset(10, 58), 14, rest > 0 and Color3.fromRGB(230, 130, 110) or SOFT)
+	end
+	local canFight = mine and not fighting and restSeconds <= 0
+	local b = button(content, "⚔ Lancer un combat", canFight and ORANGE or GREY, UDim2.new(1, -8, 0, 50), nil, function()
+		if canFight then
 			remotes.Fight:FireServer()
 		end
 	end)
@@ -314,7 +334,7 @@ local function crossesAPrice(old, new)
 		end
 	end
 	for _, hen in Config.Hens do
-		if crossed(hen.price) then
+		if state and crossed(Config.henPrice(hen, Config.countHens(state.hens, hen.id))) then
 			return true
 		end
 	end
@@ -370,9 +390,15 @@ local logLabel = label(overlay, "", UDim2.fromScale(0.9, 0.06), UDim2.fromScale(
 logLabel.ZIndex = 11
 local resultLabel = label(overlay, "", UDim2.fromScale(0.9, 0.12), UDim2.fromScale(0.05, 0.78), 26, nil, Enum.TextXAlignment.Center)
 resultLabel.ZIndex = 11
+local fightConn = nil
+local boostFrame -- défini plus bas
 local closeBtn = button(overlay, "Fermer", ORANGE, UDim2.fromOffset(200, 46), UDim2.new(0.5, -100, 0.92, 0), function()
 	overlay.Visible = false
 	fighting = false
+	if fightConn then
+		fightConn:Disconnect()
+		fightConn = nil
+	end
 	arena:ClearAllChildren()
 	if state then
 		renderPanel()
@@ -484,79 +510,152 @@ local function buildArena(r)
 	return actors, spectators
 end
 
-remotes.FightResult.OnClientEvent:Connect(function(r)
+-- Boost : on matraque le bouton pour remplir la jauge ; quand elle est pleine, le serveur active le boost.
+local BOOST = Config.Boost
+boostFrame = new("Frame", { Size = UDim2.fromOffset(320, 110), Position = UDim2.new(0.5, -160, 0.55, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 15 }, overlay)
+local gaugeBack = new("Frame", { Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = Color3.fromRGB(30, 30, 50), BorderSizePixel = 0, ZIndex = 15 }, boostFrame)
+corner(gaugeBack, 11)
+local gaugeFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = Color3.fromRGB(70, 170, 255), BorderSizePixel = 0, ZIndex = 16 }, gaugeBack)
+corner(gaugeFill, 11)
+local boostBtn = button(boostFrame, "⚡ BOOST ! Clique vite !", Color3.fromRGB(60, 130, 230), UDim2.new(1, 0, 0, 64), UDim2.fromOffset(0, 32), nil)
+boostBtn.ZIndex = 16
+boostBtn.TextSize = 22
+local boostCount = label(boostFrame, "", UDim2.new(1, 0, 0, 16), UDim2.fromOffset(0, 98), 13, nil, Enum.TextXAlignment.Center)
+boostCount.ZIndex = 16
+
+local gauge, waitingServer, boostUntil, boostsUsed = 0, false, 0, 0
+
+local function refreshBoostUi()
+	local now = os.clock()
+	if now < boostUntil then
+		gaugeFill.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
+		gaugeFill.Size = UDim2.fromScale((boostUntil - now) / BOOST.Duration, 1)
+		boostBtn.Text = "⚡ BOOST ACTIVÉ ! ⚡"
+		boostBtn.BackgroundColor3 = Color3.fromRGB(230, 160, 30)
+	else
+		gaugeFill.BackgroundColor3 = Color3.fromRGB(70, 170, 255)
+		gaugeFill.Size = UDim2.fromScale(gauge, 1)
+		local left = boostsUsed >= BOOST.MaxPerFight
+		boostBtn.Text = left and "Boosts épuisés" or "⚡ BOOST ! Clique vite !"
+		boostBtn.BackgroundColor3 = left and GREY or Color3.fromRGB(60, 130, 230)
+	end
+	boostCount.Text = ("Boosts : %d / %d  (+%d%% de dégâts pendant %ds)"):format(BOOST.MaxPerFight - boostsUsed, BOOST.MaxPerFight, math.floor((BOOST.DamageMul - 1) * 100), BOOST.Duration)
+end
+
+boostBtn.Activated:Connect(function()
+	if not fighting or waitingServer or boostsUsed >= BOOST.MaxPerFight or os.clock() < boostUntil then
+		return
+	end
+	gauge = math.min(1, gauge + BOOST.ClickGain)
+	if gauge >= 1 then
+		waitingServer = true
+		remotes.Boost:FireServer()
+	end
+end)
+
+local actors, spectators = {}, {}
+local fighters = {}
+local excitement = 0.4
+
+local function startFight(r)
 	fighting = true
 	overlay.Visible = true
 	closeBtn.Visible = false
 	resultLabel.Text = ""
 	logLabel.Text = "Le combat commence !"
-	local fighters = { r.a, r.b }
+	fighters = { r.a, r.b }
 	for i = 1, 2 do
 		nameLabels[i].Text = fighters[i].name
 		nameLabels[i].TextColor3 = Config.RarityColors[fighters[i].rarity] or Color3.new(1, 1, 1)
 		setHp(i, fighters[i].hp, fighters[i].hp, true)
 	end
+	actors, spectators = buildArena(r)
+	excitement = 0.4
+	gauge, waitingServer, boostUntil, boostsUsed = 0, false, 0, 0
+	boostFrame.Visible = true
 
-	local actors, spectators = buildArena(r)
-	local excitement = 0.4
+	if fightConn then
+		fightConn:Disconnect()
+	end
 	local t0 = os.clock()
-	local bob = RunService.Heartbeat:Connect(function()
-		local t = os.clock() - t0
+	local last = t0
+	fightConn = RunService.Heartbeat:Connect(function()
+		local now = os.clock()
+		local dt = now - last
+		last = now
 		for _, s in spectators do
-			local hop = math.abs(math.sin(t * (4 + excitement * 4) + s.phase)) * excitement
+			local hop = math.abs(math.sin((now - t0) * (4 + excitement * 4) + s.phase)) * excitement
 			s.model:PivotTo(s.base * CFrame.new(0, hop, 0))
 		end
-	end)
-
-	task.spawn(function()
-		local lastT = r.events[#r.events].t
-		local scale = math.min(1, 12 / lastT) -- un combat dure 12 s maximum à l'écran
-		local prev = 0
-		task.wait(1)
-		for _, e in r.events do
-			task.wait((e.t - prev) * scale)
-			prev = e.t
-			local att, def = actors[e.attacker], actors[3 - e.attacker]
-			local attacker, defender = fighters[e.attacker], fighters[3 - e.attacker]
-
-			-- l'attaquant fonce, le défenseur encaisse
-			moveActor(att, att.base * CFrame.new(0, e.crit and 1.2 or 0.3, e.crit and -5 or -3.5), 0.1)
-			task.delay(0.1, function()
-				moveActor(att, att.base, 0.18)
-			end)
-			task.delay(0.1, function()
-				flash(def)
-				moveActor(def, def.base * CFrame.new(0, 0.5, 1.6) * CFrame.Angles(math.rad(-15), 0, 0), 0.08)
-				task.delay(0.1, function()
-					moveActor(def, def.base, 0.2)
-				end)
-				popup(def.base.Position + Vector3.new(0, 5, 0), (e.crit and "CRIT -" or "-") .. e.dmg, e.crit and Color3.fromRGB(255, 190, 40) or Color3.fromRGB(255, 90, 80), e.crit)
-			end)
-			excitement = math.min(1.2, excitement + 0.05)
-
-			logLabel.Text = ("%s frappe %s : -%d%s"):format(attacker.name, defender.name, e.dmg, e.crit and " (COUP CRITIQUE !)" or "")
-			setHp(1, e.hp1, r.a.hp)
-			setHp(2, e.hp2, r.b.hp)
+		if not waitingServer and now >= boostUntil then
+			gauge = math.max(0, gauge - BOOST.Decay * dt)
 		end
-
-		task.wait(0.4)
-		local won = r.winner == 1
-		local winner, loser = actors[r.winner], actors[3 - r.winner]
-		moveActor(loser, loser.base * CFrame.new(0, -0.9, 0) * CFrame.Angles(0, 0, math.rad(90)), 0.5)
-		excitement = 1.2
-		task.spawn(function()
-			for _ = 1, 4 do
-				moveActor(winner, winner.base * CFrame.new(0, 2.5, 0), 0.25)
-				task.wait(0.3)
-				moveActor(winner, winner.base, 0.25, Enum.EasingStyle.Bounce)
-				task.wait(0.3)
-			end
-		end)
-
-		resultLabel.TextColor3 = won and Color3.fromRGB(255, 225, 130) or Color3.fromRGB(230, 110, 100)
-		resultLabel.Text = ("%s\n+%d 🪶   %s%d 🏆   (Ligue %s)"):format(won and "VICTOIRE !" or "DÉFAITE", r.rewards.feathers, r.rewards.trophies >= 0 and "+" or "", r.rewards.trophies, r.league)
-		closeBtn.Visible = true
-		task.wait(5)
-		bob:Disconnect()
+		refreshBoostUi()
 	end)
+end
+
+local function playHit(e)
+	local att, def = actors[e.attacker], actors[3 - e.attacker]
+	local attacker, defender = fighters[e.attacker], fighters[3 - e.attacker]
+
+	-- l'attaquant fonce, le défenseur encaisse
+	moveActor(att, att.base * CFrame.new(0, e.crit and 1.2 or 0.3, e.crit and -5 or -3.5), 0.1)
+	task.delay(0.1, function()
+		moveActor(att, att.base, 0.18)
+		flash(def)
+		moveActor(def, def.base * CFrame.new(0, 0.5, 1.6) * CFrame.Angles(math.rad(-15), 0, 0), 0.08)
+		task.delay(0.1, function()
+			moveActor(def, def.base, 0.2)
+		end)
+		local color = e.crit and Color3.fromRGB(255, 190, 40) or Color3.fromRGB(255, 90, 80)
+		if e.boosted then
+			color = Color3.fromRGB(90, 200, 255)
+		end
+		popup(def.base.Position + Vector3.new(0, 5, 0), (e.boosted and "⚡" or "") .. (e.crit and "CRIT -" or "-") .. e.dmg, color, e.crit or e.boosted)
+	end)
+	excitement = math.min(1.2, excitement + 0.05)
+
+	logLabel.Text = ("%s frappe %s : -%d%s%s"):format(attacker.name, defender.name, e.dmg, e.crit and " (COUP CRITIQUE !)" or "", e.boosted and " ⚡BOOST" or "")
+	setHp(1, e.hp1, fighters[1].hp)
+	setHp(2, e.hp2, fighters[2].hp)
+end
+
+local function endFight(r)
+	boostFrame.Visible = false
+	local won = r.winner == 1
+	local winner, loser = actors[r.winner], actors[3 - r.winner]
+	moveActor(loser, loser.base * CFrame.new(0, -0.9, 0) * CFrame.Angles(0, 0, math.rad(90)), 0.5)
+	excitement = 1.2
+	task.spawn(function()
+		for _ = 1, 4 do
+			moveActor(winner, winner.base * CFrame.new(0, 2.5, 0), 0.25)
+			task.wait(0.3)
+			moveActor(winner, winner.base, 0.25, Enum.EasingStyle.Bounce)
+			task.wait(0.3)
+		end
+	end)
+	resultLabel.TextColor3 = won and Color3.fromRGB(255, 225, 130) or Color3.fromRGB(230, 110, 100)
+	resultLabel.Text = ("%s\n+%d 🪶   %s%d 🏆   (Ligue %s)"):format(won and "VICTOIRE !" or "DÉFAITE", r.rewards.feathers, r.rewards.trophies >= 0 and "+" or "", r.rewards.trophies, r.league)
+	closeBtn.Visible = true
+end
+
+-- un seul canal ordonné pour tout le déroulé du combat
+remotes.FightUpdate.OnClientEvent:Connect(function(msg)
+	if msg.kind == "start" then
+		startFight(msg)
+	elseif not fighting then
+		return
+	elseif msg.kind == "hit" then
+		playHit(msg)
+	elseif msg.kind == "boost" then
+		waitingServer = false
+		gauge = 0
+		boostsUsed = msg.used
+		boostUntil = os.clock() + msg.duration
+	elseif msg.kind == "boostDenied" then
+		waitingServer = false
+		gauge = 0
+	elseif msg.kind == "end" then
+		endFight(msg)
+	end
 end)
